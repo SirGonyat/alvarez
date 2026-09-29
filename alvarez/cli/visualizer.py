@@ -17,9 +17,14 @@ if _PKG_ROOT not in sys.path:
 import time
 import json
 import signal
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
 import math
 import shutil
+import tempfile
 from typing import Optional, List, Tuple
 from alvarez.config import load_config
 from alvarez.audio.capture import AudioCapture
@@ -33,10 +38,10 @@ try:
 except ImportError:
     HAVE_NUMPY = False
 
-LOCK_FILE = "/tmp/agy_visualizer.lock"
-SHM_DATA_FILE = "/dev/shm/agy_vis_data.json" if os.path.exists("/dev/shm") else "/tmp/agy_vis_data.json"
-SHM_LINE_FILE = "/dev/shm/agy_vis_line.txt" if os.path.exists("/dev/shm") else "/tmp/agy_vis_line.txt"
-TERM_WIDTH_FILE = "/dev/shm/agy_term_width.txt" if os.path.exists("/dev/shm") else "/tmp/agy_term_width.txt"
+LOCK_FILE = os.path.join(tempfile.gettempdir(), "agy_visualizer.lock")
+SHM_DATA_FILE = "/dev/shm/agy_vis_data.json" if os.path.exists("/dev/shm") else os.path.join(tempfile.gettempdir(), "agy_vis_data.json")
+SHM_LINE_FILE = "/dev/shm/agy_vis_line.txt" if os.path.exists("/dev/shm") else os.path.join(tempfile.gettempdir(), "agy_vis_line.txt")
+TERM_WIDTH_FILE = "/dev/shm/agy_term_width.txt" if os.path.exists("/dev/shm") else os.path.join(tempfile.gettempdir(), "agy_term_width.txt")
 
 _lock_fd = None
 
@@ -47,7 +52,14 @@ def acquire_singleton_lock() -> bool:
         return True
     try:
         _lock_fd = open(LOCK_FILE, "w")
-        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if fcntl:
+            fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        else:
+            try:
+                import msvcrt
+                msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+            except (ImportError, IOError, OSError):
+                pass
         return True
     except (IOError, OSError):
         return False

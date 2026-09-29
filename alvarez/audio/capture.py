@@ -7,7 +7,11 @@ Captures real-time PCM audio streams from PipeWire desktop sink monitor (@DEFAUL
 import os
 import subprocess
 import shutil
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
 from typing import Optional
 
 
@@ -56,8 +60,11 @@ class AudioCapture:
             # Set stdout to non-blocking
             if self.process.stdout:
                 fd = self.process.stdout.fileno()
-                fl = fcntl.fcntl(fd, fcntl.F_GETFL)
-                fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+                if fcntl:
+                    fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+                    fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+                elif hasattr(os, "set_blocking"):
+                    os.set_blocking(fd, False)
             return True
         except Exception:
             self.process = None
