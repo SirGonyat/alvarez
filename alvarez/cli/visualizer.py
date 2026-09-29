@@ -39,9 +39,14 @@ except ImportError:
     HAVE_NUMPY = False
 
 LOCK_FILE = os.path.join(tempfile.gettempdir(), "agy_visualizer.lock")
-SHM_DATA_FILE = "/dev/shm/agy_vis_data.json" if os.path.exists("/dev/shm") else os.path.join(tempfile.gettempdir(), "agy_vis_data.json")
-SHM_LINE_FILE = "/dev/shm/agy_vis_line.txt" if os.path.exists("/dev/shm") else os.path.join(tempfile.gettempdir(), "agy_vis_line.txt")
-TERM_WIDTH_FILE = "/dev/shm/agy_term_width.txt" if os.path.exists("/dev/shm") else os.path.join(tempfile.gettempdir(), "agy_term_width.txt")
+if sys.platform == "linux" and os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK):
+    SHM_DATA_FILE = "/dev/shm/agy_vis_data.json"
+    SHM_LINE_FILE = "/dev/shm/agy_vis_line.txt"
+    TERM_WIDTH_FILE = "/dev/shm/agy_term_width.txt"
+else:
+    SHM_DATA_FILE = os.path.join(tempfile.gettempdir(), "agy_vis_data.json")
+    SHM_LINE_FILE = os.path.join(tempfile.gettempdir(), "agy_vis_line.txt")
+    TERM_WIDTH_FILE = os.path.join(tempfile.gettempdir(), "agy_term_width.txt")
 
 _lock_fd = None
 
@@ -236,7 +241,7 @@ def run_visualizer():
                 buffer.write("\n".join(lines))
 
                 # Send redraw tick (SIGWINCH) to parent agy process to update statusline smoothly
-                if parent_agy_pid and parent_agy_pid > 1:
+                if parent_agy_pid and parent_agy_pid > 1 and hasattr(signal, "SIGWINCH"):
                     try:
                         os.kill(parent_agy_pid, signal.SIGWINCH)
                     except OSError:
@@ -256,7 +261,7 @@ def run_visualizer():
                         pass
 
                 # Send 1Hz redraw tick to parent agy process while idle
-                if parent_agy_pid and parent_agy_pid > 1:
+                if parent_agy_pid and parent_agy_pid > 1 and hasattr(signal, "SIGWINCH"):
                     try:
                         os.kill(parent_agy_pid, signal.SIGWINCH)
                     except OSError:

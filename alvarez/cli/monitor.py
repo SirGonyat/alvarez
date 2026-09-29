@@ -20,6 +20,12 @@ try:
 except ImportError:
     HAS_TTY = False
 
+try:
+    import msvcrt
+    HAS_MSVCRT = True
+except ImportError:
+    HAS_MSVCRT = False
+
 _REAL_FILE = os.path.realpath(__file__)
 _PKG_ROOT = os.path.abspath(os.path.join(os.path.dirname(_REAL_FILE), "..", ".."))
 if _PKG_ROOT not in sys.path:
@@ -63,8 +69,61 @@ thoughts_buffer = []
 scroll_offset = 0
 _shared_player: Optional[StreamPlayer] = None
 
+def handle_key_action(c: str):
+    global scroll_offset, shutdown_flag, _shared_player
+    if c.lower() == 's':
+        if _shared_player:
+            _shared_player.next_track()
+    elif c.lower() == 'v':
+        if _shared_player:
+            state = _shared_player.get_state()
+            presets = _shared_player.get_available_presets()
+            if not presets:
+                presets = ["synth", "ambient", "lofi", "deep"]
+            cur = (state.preset or "synth").lower()
+            if cur not in presets:
+                cur = presets[0]
+            next_preset = presets[(presets.index(cur) + 1) % len(presets)]
+            _shared_player.play_preset(next_preset, standalone=True)
+    elif c.lower() == 'p' or c == ' ':
+        if _shared_player:
+            state = _shared_player.get_state()
+            if state.status == "playing":
+                _shared_player.stop()
+            else:
+                last_p = (state.preset or "").lower()
+                valid_p = _shared_player.get_available_presets()
+                if last_p not in valid_p:
+                    last_p = valid_p[0] if valid_p else "synth"
+                _shared_player.play_preset(last_p, start_index=state.index, standalone=True)
+    elif c.lower() == 'q' or c == '\x03':
+        shutdown_flag = True
+
 def get_input():
     global scroll_offset, old_tty_settings, shutdown_flag, _shared_player
+    if HAS_MSVCRT:
+        while not shutdown_flag:
+            if msvcrt.kbhit():
+                ch = msvcrt.getch()
+                if ch in (b'\x00', b'\xe0'):
+                    ch2 = msvcrt.getch()
+                    if ch2 == b'H':  # Up arrow
+                        scroll_offset += 2
+                    elif ch2 == b'P':  # Down arrow
+                        scroll_offset = max(0, scroll_offset - 2)
+                    elif ch2 == b'I':  # Page Up
+                        scroll_offset += 10
+                    elif ch2 == b'Q':  # Page Down
+                        scroll_offset = max(0, scroll_offset - 10)
+                else:
+                    try:
+                        c = ch.decode("utf-8", errors="ignore")
+                        handle_key_action(c)
+                    except Exception:
+                        pass
+            time.sleep(0.05)
+        return
+
     if not HAS_TTY or not sys.stdin.isatty(): return
     old_tty_settings = termios.tcgetattr(sys.stdin)
     try:
@@ -90,34 +149,8 @@ def get_input():
                                     if select.select([sys.stdin], [], [], 0.05)[0]:
                                         sys.stdin.read(1)
                                     scroll_offset = max(0, scroll_offset - 10)
-                elif c.lower() == 's':
-                    if _shared_player:
-                        _shared_player.next_track()
-                elif c.lower() == 'v':
-                    if _shared_player:
-                        state = _shared_player.get_state()
-                        presets = _shared_player.get_available_presets()
-                        if not presets:
-                            presets = ["synth", "ambient", "lofi", "deep"]
-                        cur = (state.preset or "synth").lower()
-                        if cur not in presets:
-                            cur = presets[0]
-                        next_preset = presets[(presets.index(cur) + 1) % len(presets)]
-                        _shared_player.play_preset(next_preset, standalone=True)
-                elif c.lower() == 'p' or c == ' ':
-                    if _shared_player:
-                        state = _shared_player.get_state()
-                        if state.status == "playing":
-                            _shared_player.stop()
-                        else:
-                            last_p = (state.preset or "").lower()
-                            valid_p = _shared_player.get_available_presets()
-                            if last_p not in valid_p:
-                                last_p = valid_p[0] if valid_p else "synth"
-                            _shared_player.play_preset(last_p, start_index=state.index, standalone=True)
-                elif c.lower() == 'q' or c == '\x03':
-                    shutdown_flag = True
-                    break
+                else:
+                    handle_key_action(c)
     except Exception:
         pass
     finally:
@@ -333,7 +366,10 @@ def render_visualizer(width: int, media):
     LEVELS_PER_ROW = 7          # 7 fractional sub-levels per row
     TOTAL_LEVELS = ROWS * LEVELS_PER_ROW  # 35
 
-    VIS_DATA_FILE = "/dev/shm/agy_vis_data.json" if os.path.exists("/dev/shm") else "/tmp/agy_vis_data.json"
+    if sys.platform == "linux" and os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK):
+        VIS_DATA_FILE = "/dev/shm/agy_vis_data.json"
+    else:
+        VIS_DATA_FILE = os.path.join(tempfile.gettempdir(), "agy_vis_data.json")
     title = ""
     raw_bars = []
 
@@ -508,18 +544,26 @@ def process_transcript_line(line, w):
     except:
         pass
 
+import tempfile
+
 def ensure_visualizer_daemon():
-    daemon_bin = shutil.which("agy-rortings-vis") or os.path.expanduser("~/.local/bin/agy-rortings-vis")
-    lock_file = "/tmp/agy_visualizer.lock"
-    if os.path.exists(daemon_bin):
+    daemon_bin = shutil.which("agy-rortings-vis") or shutil.which("alvarez-vis") or os.path.expanduser("~/.local/bin/alvarez-vis")
+    lock_file = os.path.join(tempfile.gettempdir(), "agy_visualizer.lock")
+    if daemon_bin and os.path.exists(daemon_bin):
         try:
-            cmd = ["flock", "-n", lock_file, "env", "AGY_LOCKED=1", sys.executable, daemon_bin]
+            if sys.platform != "win32" and shutil.which("flock"):
+                cmd = ["flock", "-n", lock_file, "env", "AGY_LOCKED=1", sys.executable, daemon_bin]
+            else:
+                cmd = [sys.executable, daemon_bin]
+            kw = {}
+            if sys.platform != "win32":
+                kw["start_new_session"] = True
             subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
-                start_new_session=True
+                **kw
             )
         except Exception:
             pass
