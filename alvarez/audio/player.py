@@ -519,7 +519,7 @@ class StreamPlayer:
         target_pid = get_first_active_agy_pid()
 
         # Spawn detached worker
-        cli_bin = shutil.which("agy-rortings-stream") or sys.executable
+        cli_bin = shutil.which("alvarez-stream") or sys.executable
         if cli_bin.endswith(".py") or "python" in cli_bin:
             cmd = [sys.executable, "-m", "alvarez.cli.stream", "--worker", "playlist", preset_key, str(chosen_idx)]
         else:
@@ -554,7 +554,7 @@ class StreamPlayer:
         target_pid = get_first_active_agy_pid()
         clean_title = title or "Custom Stream"
 
-        cli_bin = shutil.which("agy-rortings-stream") or sys.executable
+        cli_bin = shutil.which("alvarez-stream") or sys.executable
         if cli_bin.endswith(".py") or "python" in cli_bin:
             cmd = [sys.executable, "-m", "alvarez.cli.stream", "--worker", "direct", url, clean_title]
         else:
