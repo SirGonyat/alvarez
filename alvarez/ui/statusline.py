@@ -6,8 +6,10 @@ audio visualizer lines into a complete high-density terminal HUD.
 """
 
 import os
+import sys
 import json
 import time
+import tempfile
 from typing import List, Dict, Any, Optional
 from alvarez.core.models import TelemetrySnapshot, AgentContext
 from alvarez.core.ipc import SharedBuffer
@@ -20,7 +22,10 @@ from alvarez.ui.layout import DynamicTiler
 from alvarez.ui.widgets import UIWidgets
 from alvarez.config import AppConfig
 
-VIS_DATA_FILE = "/dev/shm/agy_vis_data.json" if os.path.exists("/dev/shm") else "/tmp/agy_vis_data.json"
+if sys.platform == "linux" and os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK):
+    VIS_DATA_FILE = "/dev/shm/agy_vis_data.json"
+else:
+    VIS_DATA_FILE = os.path.join(tempfile.gettempdir(), "agy_vis_data.json")
 
 
 class StatuslineRenderer:

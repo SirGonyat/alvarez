@@ -17,7 +17,7 @@ import random
 import re
 import urllib.request
 import subprocess
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Any
 from alvarez.core.models import StreamState
 
 BASE_DIR = os.path.expanduser("~/.gemini/antigravity-cli")
@@ -208,17 +208,15 @@ def extract_media_info(url: str, fallback_title: Optional[str] = None) -> Tuple[
 def is_agy_active(target_pid: Optional[int] = None) -> bool:
     if target_pid and target_pid > 1:
         try:
-            status_file = f"/proc/{target_pid}/status"
-            if os.path.exists(status_file):
-                with open(status_file, "r") as f:
-                    for line in f:
-                        if line.startswith("State:"):
-                            st = line.split()[1]
-                            return st not in ("Z", "X")
-            os.kill(target_pid, 0)
-            return True
+            import psutil
+            p = psutil.Process(target_pid)
+            return p.is_running() and p.status() not in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD)
         except Exception:
-            return False
+            try:
+                os.kill(target_pid, 0)
+                return True
+            except Exception:
+                return False
 
     if os.path.exists(SESSION_FILE):
         try:
@@ -234,7 +232,7 @@ def is_agy_active(target_pid: Optional[int] = None) -> bool:
         import psutil
         for p in psutil.process_iter(['name', 'status']):
             try:
-                if p.info['name'] == 'agy' and p.info['status'] not in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
+                if p.info['name'] in ('agy', 'agy.exe') and p.info['status'] not in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
                     return True
             except Exception:
                 pass
@@ -257,7 +255,7 @@ def get_first_active_agy_pid() -> Optional[int]:
         import psutil
         for p in psutil.process_iter(['name', 'status']):
             try:
-                if p.info['name'] == 'agy' and p.info['status'] not in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
+                if p.info['name'] in ('agy', 'agy.exe') and p.info['status'] not in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
                     return p.pid
             except Exception:
                 pass
@@ -336,6 +334,7 @@ class StreamPlayer:
         state = self.get_state()
         stopped = False
         pids_to_kill = [state.pid, state.runner_pid]
+        sigkill = getattr(signal, "SIGKILL", signal.SIGTERM)
         for p in pids_to_kill:
             if p:
                 try:
@@ -347,7 +346,7 @@ class StreamPlayer:
                         except OSError:
                             break
                     try:
-                        os.kill(p, signal.SIGKILL)
+                        os.kill(p, sigkill)
                     except OSError:
                         pass
                     stopped = True
@@ -520,7 +519,7 @@ class StreamPlayer:
 
         # Spawn detached worker
         cli_bin = shutil.which("alvarez-stream") or sys.executable
-        if cli_bin.endswith(".py") or "python" in cli_bin:
+        if cli_bin.endswith(".py") or "python" in cli_bin or "python.exe" in cli_bin:
             cmd = [sys.executable, "-m", "alvarez.cli.stream", "--worker", "playlist", preset_key, str(chosen_idx)]
         else:
             cmd = [cli_bin, "--worker", "playlist", preset_key, str(chosen_idx)]
@@ -530,12 +529,16 @@ class StreamPlayer:
         if standalone:
             cmd.append("--standalone")
 
+        kw = {}
+        if sys.platform != "win32":
+            kw["start_new_session"] = True
+
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
-            start_new_session=True
+            **kw
         )
 
         # Wait briefly for worker to save state
@@ -555,7 +558,7 @@ class StreamPlayer:
         clean_title = title or "Custom Stream"
 
         cli_bin = shutil.which("alvarez-stream") or sys.executable
-        if cli_bin.endswith(".py") or "python" in cli_bin:
+        if cli_bin.endswith(".py") or "python" in cli_bin or "python.exe" in cli_bin:
             cmd = [sys.executable, "-m", "alvarez.cli.stream", "--worker", "direct", url, clean_title]
         else:
             cmd = [cli_bin, "--worker", "direct", url, clean_title]
@@ -565,12 +568,16 @@ class StreamPlayer:
         if standalone:
             cmd.append("--standalone")
 
+        kw = {}
+        if sys.platform != "win32":
+            kw["start_new_session"] = True
+
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
-            start_new_session=True
+            **kw
         )
 
         for _ in range(25):

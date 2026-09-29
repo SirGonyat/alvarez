@@ -53,7 +53,7 @@ class SharedBuffer:
                 self._fd = None
 
     def write(self, text: str) -> bool:
-        """Atomically writes text to the buffer in /dev/shm."""
+        """Atomically writes text to the buffer in /dev/shm or temp dir."""
         try:
             tmp_path = f"{self.path}.tmp.{os.getpid()}"
             with open(tmp_path, "w", encoding="utf-8") as f:

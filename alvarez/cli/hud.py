@@ -30,10 +30,15 @@ from alvarez.telemetry.environment import EnvironmentTelemetry
 from alvarez.audio.player import StreamPlayer, SESSION_FILE, is_agy_active
 from alvarez.ui.statusline import StatuslineRenderer
 
+import tempfile
+
 STREAM_BOOT_TRACKER = os.path.expanduser("~/.gemini/antigravity-cli/stream_boot_tracker.json")
 STREAM_CONFIG = os.path.expanduser("~/.gemini/antigravity-cli/stream_config.json")
 STREAM_STATE = os.path.expanduser("~/.gemini/antigravity-cli/stream_state.json")
-TERM_WIDTH_FILE = "/dev/shm/agy_term_width.txt" if os.path.exists("/dev/shm") else "/tmp/agy_term_width.txt"
+if sys.platform == "linux" and os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK):
+    TERM_WIDTH_FILE = "/dev/shm/agy_term_width.txt"
+else:
+    TERM_WIDTH_FILE = os.path.join(tempfile.gettempdir(), "agy_term_width.txt")
 
 
 def find_agy_parent_pid() -> Optional[int]:
@@ -41,14 +46,14 @@ def find_agy_parent_pid() -> Optional[int]:
         import psutil
         p = psutil.Process(os.getpid())
         for parent in p.parents():
-            if parent.name() == 'agy':
+            if parent.name() in ('agy', 'agy.exe'):
                 return parent.pid
     except Exception:
         pass
     try:
         import psutil
         for p in psutil.process_iter(['name', 'status']):
-            if p.info['name'] == 'agy' and p.info['status'] not in (
+            if p.info['name'] in ('agy', 'agy.exe') and p.info['status'] not in (
                 psutil.STATUS_STOPPED, psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD
             ):
                 return p.pid
@@ -134,18 +139,21 @@ def check_and_autostart_stream(agy_pid: Optional[int], session_id: Optional[str]
     if not target:
         return
 
-    stream_bin = shutil.which("agy-rortings-stream") or os.path.expanduser("~/.local/bin/agy-rortings-stream")
+    stream_bin = shutil.which("agy-rortings-stream") or shutil.which("alvarez-stream") or os.path.expanduser("~/.local/bin/alvarez-stream")
     if stream_bin and os.path.exists(stream_bin):
         try:
             cmd = [stream_bin, target]
             if target == last_preset and last_index is not None and isinstance(last_index, int) and last_index >= 0:
                 cmd.append(str(last_index + 1))
+            kw = {}
+            if sys.platform != "win32":
+                kw["start_new_session"] = True
             subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
-                start_new_session=True
+                **kw
             )
         except Exception:
             pass
@@ -155,17 +163,23 @@ def ensure_visualizer_daemon(agy_pid: Optional[int]):
     if not agy_pid or agy_pid <= 1:
         return
 
-    daemon_bin = shutil.which("agy-rortings-vis") or os.path.expanduser("~/.local/bin/agy-rortings-vis")
-    lock_file = "/tmp/agy_visualizer.lock"
-    if os.path.exists(daemon_bin):
+    daemon_bin = shutil.which("agy-rortings-vis") or shutil.which("alvarez-vis") or os.path.expanduser("~/.local/bin/alvarez-vis")
+    lock_file = os.path.join(tempfile.gettempdir(), "agy_visualizer.lock")
+    if daemon_bin and os.path.exists(daemon_bin):
         try:
-            cmd = ["flock", "-n", lock_file, "env", "AGY_LOCKED=1", sys.executable, daemon_bin, str(agy_pid)]
+            if sys.platform != "win32" and shutil.which("flock"):
+                cmd = ["flock", "-n", lock_file, "env", "AGY_LOCKED=1", sys.executable, daemon_bin, str(agy_pid)]
+            else:
+                cmd = [sys.executable, daemon_bin, str(agy_pid)]
+            kw = {}
+            if sys.platform != "win32":
+                kw["start_new_session"] = True
             subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
-                start_new_session=True
+                **kw
             )
         except Exception:
             pass
@@ -189,8 +203,14 @@ def run_hud():
     payload = {}
     if not sys.stdin.isatty():
         try:
-            r, _, _ = select.select([sys.stdin], [], [], 0.05)
-            if r:
+            can_read = False
+            if sys.platform == "win32":
+                can_read = True
+            else:
+                r, _, _ = select.select([sys.stdin], [], [], 0.05)
+                can_read = bool(r)
+
+            if can_read:
                 raw_input = sys.stdin.read()
                 if raw_input.strip():
                     payload = json.loads(raw_input)
